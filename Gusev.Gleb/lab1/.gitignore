@@ -1,0 +1,4 @@
+reminder
+build/
+cmake-build-*/
+.idea/
