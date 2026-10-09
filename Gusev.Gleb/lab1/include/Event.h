@@ -8,9 +8,10 @@
 enum class Repeat { None, Hourly, Daily, Weekly };
 
 struct Event {
-    std::time_t when = 0;          // момент срабатывания (секунды с 1970, UTC)
+    std::time_t when = 0;          // момент срабатывания
     Repeat repeat = Repeat::None;  // флаг -h / -d / -w
     std::string text;              // текст напоминания
+    std::string source;            // исходная строка для сравнения при перечитывании конфига
 };
 
 // Разбирает строку вида "add_event YYYY-MM-DD HH:MM [-h|-d|-w] text".

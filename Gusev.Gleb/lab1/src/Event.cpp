@@ -73,6 +73,8 @@ std::optional<Event> parseEvent(const std::string& line, std::string& error) {
         return std::nullopt;
     }
 
+    ev.source = line;
+    ev.source.erase(ev.source.find_last_not_of(" \t\r") + 1);
     rest.erase(rest.find_last_not_of(" \t\r") + 1);
     if (rest.empty()) {
         error = "пустой текст напоминания";
