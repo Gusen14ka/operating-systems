@@ -17,10 +17,10 @@ option(BUILD_TESTS "Собирать тесты" ON)
 # --- Ядро: все src/*.cpp, кроме main.cpp -----------------------------------
 # CONFIGURE_DEPENDS: новый .cpp в src/ подхватится без правки этого файла
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/src/*.cpp)
-list(REMOVE_ITEM CORE_SOURCES src/main.cpp)
+list(REMOVE_ITEM CORE_SOURCES ${PROJECT_SOURCE_DIR}/src/main.cpp)
 
 add_library(reminder_core STATIC ${CORE_SOURCES})
-target_include_directories(reminder_core PUBLIC include)
+target_include_directories(reminder_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 # --- Демон ------------------------------------------------------------------
 add_executable(reminder src/main.cpp)
@@ -30,15 +30,23 @@ target_link_libraries(reminder PRIVATE reminder_core)
 if(BUILD_TESTS)
     enable_testing()
 
+    # Подробные логи и артефакты упавших кейсов (каталог в .gitignore)
+    set(TEST_LOG_DIR ${PROJECT_SOURCE_DIR}/test-logs)
+
+    # Общий main() для unit-тестов
+    add_library(test_runner OBJECT ${PROJECT_SOURCE_DIR}/tests/unit/runner.cpp)
+
     # Unit-тесты: каждый tests/unit/test_*.cpp -> отдельный бинарник
     file(GLOB UNIT_TESTS CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/tests/unit/test_*.cpp)
     foreach(test_src ${UNIT_TESTS})
         get_filename_component(test_name ${test_src} NAME_WE)
         add_executable(${test_name} ${test_src})
-        target_link_libraries(${test_name} PRIVATE reminder_core)
-        add_test(NAME ${test_name} COMMAND ${test_name})
-        # Фиксируем часовой пояс, чтобы тесты не зависели от машины
-        set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "TZ=Europe/Moscow")
+        target_link_libraries(${test_name} PRIVATE reminder_core test_runner)
+        add_test(NAME unit_${test_name} COMMAND ${test_name})
+        # Часовой пояс фиксирован, чтобы результат не зависел от машины
+        set_tests_properties(unit_${test_name} PROPERTIES
+            LABELS unit
+            ENVIRONMENT "TZ=Europe/Moscow;REMINDER_TEST_LOG_DIR=${TEST_LOG_DIR}")
     endforeach()
 
     # Интеграционные тесты (bash): каждый tests/integration/test_*.sh
@@ -46,7 +54,10 @@ if(BUILD_TESTS)
     foreach(test_sh ${INTEGRATION_TESTS})
         get_filename_component(test_name ${test_sh} NAME_WE)
         add_test(NAME integration_${test_name} COMMAND bash ${test_sh} $<TARGET_FILE:reminder>)
-        # Тесты запускают реальные процессы и ждут по времени — по одному
-        set_tests_properties(integration_${test_name} PROPERTIES RUN_SERIAL TRUE)
+        # Запускают реальные процессы и ждут по времени — по одному
+        set_tests_properties(integration_${test_name} PROPERTIES
+            LABELS integration
+            RUN_SERIAL TRUE
+            ENVIRONMENT "REMINDER_TEST_LOG_DIR=${TEST_LOG_DIR}")
     endforeach()
 endif()

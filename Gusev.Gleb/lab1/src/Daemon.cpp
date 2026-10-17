@@ -13,11 +13,26 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 
 #include "Config.h"
 
 using namespace std::chrono_literals;
+
+namespace {
+
+// Текущее время по точным часам. std::time() в glibc берёт «грубые» часы ядра,
+// которые в первые миллисекунды новой секунды ещё показывают предыдущую.
+// Тогда событие «18:30», добавленное в 18:30:00.003 по date, демон счёл бы
+// ещё не наступившим и показал бы только на следующем тике, через 10 с.
+std::time_t wallNow() {
+    timespec ts{};
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return ts.tv_sec;
+}
+
+}  // namespace
 
 Daemon& Daemon::instance() {
     // Локальная static-переменная создаётся при первом вызове, ровно один раз
@@ -59,16 +74,19 @@ int Daemon::run(const std::string& configPath) {
         return 1;
     }
 
-    // 4. Свой pid — уже после демонизации, pid к этому моменту окончательный
-    std::string error;
-    if (!pidFile_.write(getpid(), error)) {
-        syslog(LOG_ERR, "pid-файл: %s", error.c_str());
+    // 4. Сигналы — ДО записи pid-файла. Кто прочитал pid из файла, тот может
+    //    сразу слать SIGHUP/SIGTERM, и сигнал не должен потеряться или убить
+    //    процесс действием по умолчанию, пока обработка ещё не настроена.
+    if (!setupSignals()) {
         closelog();
         return 1;
     }
 
-    if (!setupSignals()) {
-        pidFile_.remove();
+    // 5. Свой pid — после демонизации (pid окончательный) и после сигналов
+    std::string error;
+    if (!pidFile_.write(getpid(), error)) {
+        syslog(LOG_ERR, "pid-файл: %s", error.c_str());
+        close(signalFd_);
         closelog();
         return 1;
     }
@@ -154,6 +172,12 @@ bool Daemon::setupSignals() {
     // Блокируем сигналы: ядро не прерывает ими программу, а складывает в очередь,
     // которую мы читаем из signalfd как обычный файл. Так обработка идёт в
     // главном цикле, а не в обработчике, где почти ничего нельзя вызывать.
+    // Унаследованное SIG_IGN (например, при запуске через nohup) сбрасываем:
+    // сигналы должны доходить до signalfd
+    for (int sig : {SIGHUP, SIGTERM, SIGINT}) {
+        signal(sig, SIG_DFL);
+    }
+
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGHUP);
@@ -184,7 +208,7 @@ void Daemon::reloadConfig() {
     }
     notifier_ = Notifier(cfg->terminal);
 
-    const auto r = scheduler_.load(cfg->events, std::time(nullptr));
+    const auto r = scheduler_.load(cfg->events, wallNow());
     syslog(LOG_INFO, "конфиг загружен: событий %zu, в прошлом пропущено %zu, уже показано %zu",
            r.scheduled, r.expired, r.done);
 }
@@ -193,7 +217,7 @@ void Daemon::tick() {
     const int reaped = Notifier::reapChildren();
     (void)reaped;
 
-    for (const auto& ev : scheduler_.takeDue(std::time(nullptr))) {
+    for (const auto& ev : scheduler_.takeDue(wallNow())) {
         std::string error;
         const pid_t pid = notifier_.show(ev.text, error);
         if (pid > 0) {
