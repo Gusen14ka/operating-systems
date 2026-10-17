@@ -1,7 +1,4 @@
 #!/bin/sh
-# Сборка демона reminder. Результат: ./reminder, промежуточные файлы удаляются.
-# Использование: ./build.sh            — только демон
-#                ./build.sh --test     — ещё собрать и прогнать тесты
 set -eu
 
 cd "$(dirname "$0")"
@@ -18,7 +15,13 @@ cmake --build "$BUILD_DIR" --parallel "$(nproc)"
 cp "$BUILD_DIR/reminder" ./reminder
 
 if [ "$TESTS" = ON ]; then
+    # Тесты не должны прерывать скрипт до сообщения о логах
+    set +e
     ctest --test-dir "$BUILD_DIR" --output-on-failure
+    TEST_RC=$?
+    set -e
+    echo "Подробные логи тестов: $(pwd)/test-logs/"
+    [ "$TEST_RC" -eq 0 ] || { echo "Есть упавшие тесты" >&2; exit "$TEST_RC"; }
 fi
 
 echo "Готово: $(pwd)/reminder"

@@ -2,3 +2,4 @@ reminder
 build/
 cmake-build-*/
 .idea/
+test-logs/
