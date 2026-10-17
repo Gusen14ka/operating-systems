@@ -5,17 +5,19 @@
 
 namespace {
 
+// "2026-10-12" + "18:30" -> time_t по локальному времени
 std::optional<std::time_t> parseDateTime(const std::string& date, const std::string& time) {
     const std::string s = date + " " + time;
 
     std::tm tm{};
     const char* end = strptime(s.c_str(), "%Y-%m-%d %H:%M", &tm);
     if (end == nullptr || *end != '\0') {
-        return std::nullopt;
+        return std::nullopt;  // формат не совпал или в конце мусор
     }
 
-
-    // mktime "нормализует" дату
+    // strptime не проверяет календарь: 2026-02-31 он примет.
+    // mktime "нормализует" такую дату в 2026-03-03, поэтому сравниваем
+    // поля до и после — если что-то сдвинулось, дата была невалидной.
     const std::tm original = tm;
     tm.tm_isdst = -1;  // пусть mktime сам решит, действует ли летнее время
     const std::time_t t = std::mktime(&tm);
@@ -57,9 +59,11 @@ std::optional<Event> parseEvent(const std::string& line, std::string& error) {
     }
     ev.when = *when;
 
+    // Остаток строки: [флаг] текст. Текст берём целиком, с пробелами внутри.
     std::string rest;
     std::getline(in >> std::ws, rest);
 
+    // Смотрим первое слово остатка: если это флаг — отрезаем его
     const std::size_t space = rest.find_first_of(" \t");
     const std::string first = rest.substr(0, space);
     if (const auto flag = parseFlag(first)) {
@@ -73,14 +77,17 @@ std::optional<Event> parseEvent(const std::string& line, std::string& error) {
         return std::nullopt;
     }
 
-    ev.source = line;
-    ev.source.erase(ev.source.find_last_not_of(" \t\r") + 1);
+    // Убираем хвостовые пробелы и \r (если файл правили в Windows)
     rest.erase(rest.find_last_not_of(" \t\r") + 1);
     if (rest.empty()) {
         error = "пустой текст напоминания";
         return std::nullopt;
     }
     ev.text = rest;
+
+    ev.source = line;
+    ev.source.erase(ev.source.find_last_not_of(" \t\r") + 1);
+    ev.source.erase(0, ev.source.find_first_not_of(" \t"));
     return ev;
 }
 
@@ -92,6 +99,8 @@ std::time_t advance(std::time_t t, Repeat repeat) {
             return t + 60 * 60;
         case Repeat::Daily:
         case Repeat::Weekly: {
+            // Сдвигаем день в календаре, а mktime сам разберётся
+            // с концом месяца (31 окт + 1 = 1 ноя) и летним временем.
             std::tm tm{};
             localtime_r(&t, &tm);
             tm.tm_mday += (repeat == Repeat::Daily) ? 1 : 7;
@@ -109,6 +118,8 @@ bool scheduleFrom(Event& ev, std::time_t notBefore) {
     if (ev.repeat == Repeat::None) {
         return false;
     }
+    // Шагаем по одному периоду. Даже ежечасное событие годовалой давности —
+    // это ~9000 итераций, мгновенно.
     while (ev.when < notBefore) {
         ev.when = advance(ev.when, ev.repeat);
     }

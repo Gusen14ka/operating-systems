@@ -4,7 +4,7 @@ project(reminder LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)  # compile_commands.json для IDE/clangd
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -14,21 +14,23 @@ add_compile_options(-Wall -Wextra -Werror)
 
 option(BUILD_TESTS "Собирать тесты" ON)
 
+# --- Ядро: все src/*.cpp, кроме main.cpp -----------------------------------
+# CONFIGURE_DEPENDS: новый .cpp в src/ подхватится без правки этого файла
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/src/*.cpp)
-list(REMOVE_ITEM CORE_SOURCES ${PROJECT_SOURCE_DIR}/src/main.cpp)
+list(REMOVE_ITEM CORE_SOURCES src/main.cpp)
 
 add_library(reminder_core STATIC ${CORE_SOURCES})
-target_include_directories(reminder_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(reminder_core PUBLIC include)
 
-# Демон
+# --- Демон ------------------------------------------------------------------
 add_executable(reminder src/main.cpp)
 target_link_libraries(reminder PRIVATE reminder_core)
 
-# Тесты
+# --- Тесты ------------------------------------------------------------------
 if(BUILD_TESTS)
     enable_testing()
 
-    # Unit-тесты:
+    # Unit-тесты: каждый tests/unit/test_*.cpp -> отдельный бинарник
     file(GLOB UNIT_TESTS CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/tests/unit/test_*.cpp)
     foreach(test_src ${UNIT_TESTS})
         get_filename_component(test_name ${test_src} NAME_WE)
@@ -39,10 +41,12 @@ if(BUILD_TESTS)
         set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "TZ=Europe/Moscow")
     endforeach()
 
-    # Интеграционные тесты (bash):
+    # Интеграционные тесты (bash): каждый tests/integration/test_*.sh
     file(GLOB INTEGRATION_TESTS CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/tests/integration/test_*.sh)
     foreach(test_sh ${INTEGRATION_TESTS})
         get_filename_component(test_name ${test_sh} NAME_WE)
-        add_test(NAME ${test_name} COMMAND bash ${test_sh} $<TARGET_FILE:reminder>)
+        add_test(NAME integration_${test_name} COMMAND bash ${test_sh} $<TARGET_FILE:reminder>)
+        # Тесты запускают реальные процессы и ждут по времени — по одному
+        set_tests_properties(integration_${test_name} PROPERTIES RUN_SERIAL TRUE)
     endforeach()
 endif()
